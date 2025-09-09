@@ -2,12 +2,14 @@ import osmnx as ox
 import networkx as nx
 import folium
 import numpy as np
+import pandas as pd
+import math
 
 # Download and prepare the graph
 place_name = "Dublin City, Ireland"
 G = ox.graph.graph_from_place(place_name, network_type="drive")
 
-#G = ox.simplification.consolidate_intersections(
+# G = ox.simplification.consolidate_intersections(
 #        G,
 #        tolerance=0.0002,
 #        rebuild_graph=True,
@@ -88,6 +90,21 @@ for node_id in major_intersections:
         fillOpacity=0.8
     ).add_to(m)
 
+# Visualize sensor locations from dlr_scats_sites-1.csv
+sensor_df = pd.read_csv("scats-data/dcc_traffic_signals_20221130.csv")
+    
+for idx, row in sensor_df.iterrows():
+    lat, lon = row.get('Lat'), row.get('Long')
+    site_id, site_type = row.get('Site_ID'), row.get("Site_Type")
+    if lat is not None and lon is not None and "SCATS" in site_type:
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=4,
+            popup=f"Sensor ID: {site_id}",
+            colour='green',
+            fillColor='green',
+            fillOpacity=0.8
+        ).add_to(m)
 
 nodes_gdf.to_csv("node_data.csv")
 edges_gdf.to_csv("edges_data.csv")
@@ -96,6 +113,32 @@ edges_gdf.to_csv("edges_data.csv")
 m.save("dublin_interactive_osmnx.html")
 print("Interactive map saved as 'dublin_interactive_osmnx.html'")
 
+# Map each SCATS site to the nearest node using Euclidean distance
+scats_df = pd.read_csv("scats-data/dcc_traffic_signals_20221130.csv")
+nodes_df = pd.read_csv("node_data.csv")
+
+mapping = []
+for idx, scats_row in scats_df.iterrows():
+    site_id = scats_row['SiteID']
+    site_lat = scats_row['Lat']
+    site_lon = scats_row['Long']
+    # Compute Euclidean distance to all nodes
+    dists = ((nodes_df['y'] - site_lat)**2 + (nodes_df['x'] - site_lon)**2)
+    min_idx = dists.idxmin()
+    nearest_node = nodes_df.loc[min_idx]
+    mapping.append({
+        'SiteID': site_id,
+        'Node_osmid': nearest_node['osmid'],
+        'Site_Lat': site_lat,
+        'Site_Lon': site_lon,
+        'Node_Lat': nearest_node['y'],
+        'Node_Lon': nearest_node['x'],
+        'Distance': math.sqrt(dists[min_idx])
+    })
+
+mapping_df = pd.DataFrame(mapping)
+mapping_df.to_csv("scats_to_node_mapping.csv", index=False)
+print("SCATS site to node mapping saved as 'scats_to_node_mapping.csv'")
 # Display basic graph info
 print(f"Graph contains {len(G.nodes)} nodes and {len(G.edges)} edges")
 # print(f"Found {len(major_intersections)} major intersections (degree >= 4)")
