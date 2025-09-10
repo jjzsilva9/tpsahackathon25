@@ -1,9 +1,11 @@
 import osmnx as ox
+import os
 import networkx as nx
 import folium
 import numpy as np
 import pandas as pd
 import math
+import csv
 
 # Download and prepare the graph
 place_name = "Dublin City, Ireland"
@@ -25,7 +27,6 @@ print(f'Edge info: {edges_gdf.info()}')
 A = nx.to_numpy_array(G)
 np.save("adj_matrix", A)
 
-
 # Calculate map center
 center_lat = (nodes_gdf.y.min() + nodes_gdf.y.max()) / 2
 center_lon = (nodes_gdf.x.min() + nodes_gdf.x.max()) / 2
@@ -40,55 +41,76 @@ m = folium.Map(
 # Add edges to the map
 for idx, row in edges_gdf.iterrows():
     if row.geometry is not None:
-
-        # Convert coordinates for Folium [lat, lon] format
         coords = [[point[1], point[0]] for point in row.geometry.coords]
-        
-        # Create popup with street information
         popup_text = f"Street: {row.get('name', 'Unnamed')}<br>Type: {row.get('highway', 'Unknown')}<br>Reversed: {row.get('reversed', 'Unknown')}"
-
-
-        if idx[0] < 20:
-            print(f'Num lanes : {row.lanes}')
-            print(f'Type : {row.highway}')
-            try:
-                folium.PolyLine(
-            locations=coords,
-            color='orange',
-            weight=2,
-            opacity=0.7,
-            popup=folium.Popup(popup_text, max_width=200)
-        ).add_to(m)
-            except:        
-                folium.PolyLine(
-                    locations=coords,
-                    color='blue',
-                    weight=2,
-                    opacity=0.7,
-                    popup=folium.Popup(popup_text, max_width=200)
-                ).add_to(m)
-
-        else:
+        try:
             folium.PolyLine(
+                locations=coords,
+                color='orange' if idx[0] < 20 else 'blue',
+                weight=2,
+                opacity=0.7,
+                popup=folium.Popup(popup_text, max_width=200)
+            ).add_to(m)
+        except:
+            folium.PolyLine(
+                locations=coords,
+                color='blue',
+                weight=2,
+                opacity=0.7,
+                popup=folium.Popup(popup_text, max_width=200)
+            ).add_to(m)
+
+# Overlay SCAT subgraph edges
+scat_edge_path = 'scat-graph/edge_data.csv'
+scat_node_path = 'scat-graph/node_data.csv'
+scat_nodes = set()
+if os.path.exists(scat_node_path):
+    with open(scat_node_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            scat_nodes.add(row['node_id'])
+
+scat_edges = []
+if os.path.exists(scat_edge_path):
+    with open(scat_edge_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            scat_edges.append((row['from_node'], row['to_node']))
+
+# Map node_id to coordinates
+node_coords = {}
+for node_id in scat_nodes:
+    # Try to cast node_id to int for matching
+    try:
+        node_id_cast = int(node_id)
+    except ValueError:
+        node_id_cast = node_id
+    if node_id_cast in nodes_gdf.index:
+        node_coords[node_id] = (nodes_gdf.loc[node_id_cast].y, nodes_gdf.loc[node_id_cast].x)
+
+for u, v in scat_edges:
+    if u in node_coords and v in node_coords:
+        coords = [node_coords[u], node_coords[v]]
+        folium.PolyLine(
             locations=coords,
-            color='blue',
-            weight=2,
-            opacity=0.7,
-            popup=folium.Popup(popup_text, max_width=200)
+            color='red',
+            weight=5,
+            opacity=0.9,
+            popup=folium.Popup(f'SCATS Edge: {u} - {v}', max_width=200)
         ).add_to(m)
 
-# Add some major intersections as markers
-major_intersections = [node for node, degree in G.degree() if degree >= 8]
-for node_id in major_intersections:
-    node_data = nodes_gdf.loc[node_id]
-    folium.CircleMarker(
-        location=[node_data.y, node_data.x],
-        radius=4,
-        popup=f"Major Intersection<br>Node: {node_id}<br>Connections: {G.degree(node_id)}",
-        color='red',
-        fillColor='red',
-        fillOpacity=0.8
-    ).add_to(m)
+# # Add some major intersections as markers
+# major_intersections = [node for node, degree in G.degree() if degree >= 8]
+# for node_id in major_intersections:
+#     node_data = nodes_gdf.loc[node_id]
+#     folium.CircleMarker(
+#         location=[node_data.y, node_data.x],
+#         radius=4,
+#         popup=f"Major Intersection<br>Node: {node_id}<br>Connections: {G.degree(node_id)}",
+#         color='red',
+#         fillColor='red',
+#         fillOpacity=0.8
+#     ).add_to(m)
 
 # Visualize sensor locations from dlr_scats_sites-1.csv
 sensor_df = pd.read_csv("scats-data/dcc_traffic_signals_20221130.csv")

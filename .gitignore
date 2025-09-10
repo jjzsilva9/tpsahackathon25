@@ -1,4 +1,4 @@
 adj_matrix.npy
 cache/*
-SCATSJanuary2023.csv
+scats-data/SCATSJanuary2023.csv
 remove-files.sh
