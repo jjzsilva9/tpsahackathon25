@@ -357,3 +357,273 @@ class Network:
         new_densities = np.array([road.density for road in self.roads])
         return new_densities
 
+    def animate_traffic_flow(self, num_steps=30, interval=800, figsize=(10, 8)):
+        """
+        Create a simple animated visualization showing road densities over time.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.animation as animation
+            import networkx as nx
+            
+            # Set backend for better compatibility
+            import matplotlib
+            matplotlib.use('TkAgg')  # or 'Qt5Agg' depending on system
+            
+        except ImportError:
+            print("Error: matplotlib and networkx required. Install with: pip install matplotlib networkx")
+            return
+        
+        # Create graph
+        G = nx.DiGraph()
+        
+        # Add nodes (junctions with roads)
+        for junction in self.junctions:
+            if junction.road_in or junction.roads_out:
+                G.add_node(junction.id)
+        
+        # Add edges (roads)
+        edge_road_mapping = {}
+        for road in self.roads:
+            G.add_edge(road.start, road.end)
+            edge_road_mapping[(road.start, road.end)] = road
+        
+        # Setup plot
+        fig, ax = plt.subplots(figsize=figsize)
+        pos = nx.spring_layout(G, k=2, iterations=50)
+        
+        # Calculate A matrix for simulation
+        A_total = self.sum_matrices()
+        initial_densities = [road.density for road in self.roads]
+        
+        def update_frame(frame_num):
+            ax.clear()
+            
+            # Step simulation
+            if frame_num > 0:
+                current_vector = self.get_current_vector()
+                self.step_forward(A_total, current_vector)
+            
+            # Get road densities for edge labels and colors
+            edge_labels = {}
+            edge_colors = []
+            for edge in G.edges():
+                road = edge_road_mapping[edge]
+                edge_labels[edge] = f"{road.density:.1f}"
+                
+                # Color roads based on density (normalized by max density)
+                max_density = max(r.density for r in self.roads)
+                if max_density > 0:
+                    color_intensity = road.density / max_density
+                    edge_colors.append(plt.cm.Reds(color_intensity))
+                else:
+                    edge_colors.append('gray')
+            
+            # Draw network
+            nx.draw_networkx_nodes(G, pos, ax=ax, node_color='lightblue', node_size=600)
+            nx.draw_networkx_edges(G, pos, ax=ax, edge_color=edge_colors, width=2, 
+                                 arrowsize=15, arrowstyle='->')
+            nx.draw_networkx_labels(G, pos, {node: f"J{node}" for node in G.nodes()}, 
+                                  ax=ax, font_size=8)
+            
+            # Only show edge labels for a subset to avoid clutter
+            if len(edge_labels) < 50:  # Only show labels if network is small enough
+                nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax, font_size=6, 
+                                           bbox=dict(boxstyle='round,pad=0.1', facecolor='yellow', alpha=0.7))
+            
+            ax.set_title(f"Traffic Densities - Step {frame_num}\n(Red intensity = traffic density)", fontsize=14)
+            ax.set_aspect('equal')
+            
+            # Add total density info
+            total_density = sum(road.density for road in self.roads)
+            ax.text(0.02, 0.98, f"Total Density: {total_density:.2f}", transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8), fontsize=10, verticalalignment='top')
+        
+        # Create and show animation
+        ani = animation.FuncAnimation(fig, update_frame, frames=num_steps, 
+                                    interval=interval, repeat=True)
+        
+        # Reset to initial state
+        for i, density in enumerate(initial_densities):
+            self.roads[i].density = density
+        
+        plt.tight_layout()
+        plt.show()
+        return ani
+
+    def save_traffic_animation(self, filename="traffic_animation.gif", num_steps=20, interval=800, grid_layout=True, rows=10, cols=10):
+        """
+        Create and save traffic flow animation as a GIF file.
+        
+        Args:
+            filename: Base filename for the animation
+            num_steps: Number of animation steps
+            interval: Time between frames in ms
+            grid_layout: Whether to use grid layout for nodes
+            rows: Number of rows in the grid (for grid_layout=True)
+            cols: Number of columns in the grid (for grid_layout=True)
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.animation as animation
+            import networkx as nx
+            from datetime import datetime
+            
+            # Set backend for file saving
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend for saving files
+            
+        except ImportError:
+            print("Error: matplotlib and networkx required.")
+            return
+        
+        # Add timestamp to filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, 'gif')
+        timestamped_filename = f"{base_name}_{timestamp}.{ext}"
+        
+        print(f"Creating traffic flow animation with timestamp: {timestamped_filename}")
+        
+        # Create a graph for the network
+        G = nx.DiGraph()
+        
+        # Add all nodes that have roads connected
+        active_junctions = set()
+        for road in self.roads:
+            active_junctions.add(road.start)
+            active_junctions.add(road.end)
+        
+        for junction_id in active_junctions:
+            G.add_node(junction_id)
+        
+        # Add edges (roads)
+        edge_road_mapping = {}
+        for road in self.roads:
+            if road.start in active_junctions and road.end in active_junctions:
+                G.add_edge(road.start, road.end)
+                edge_road_mapping[(road.start, road.end)] = road
+        
+        # Setup plot with grid layout
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        if grid_layout:
+            # Create grid positions for nodes (Manhattan-like layout)
+            pos = {}
+            max_node = max(active_junctions) if active_junctions else 99
+            
+            # Map node IDs to grid positions
+            for node_id in active_junctions:
+                # Convert linear index to 2D grid coordinates
+                row = node_id // cols
+                col = node_id % cols
+                # Use negative row to flip y-axis (standard grid orientation)
+                pos[node_id] = (col, -row)
+        else:
+            # Use spring layout as fallback
+            pos = nx.spring_layout(G, k=3, iterations=50)
+        
+        # Calculate A matrix for simulation
+        A_total = self.sum_matrices()
+        initial_densities = [road.density for road in self.roads]
+        
+        # Store data for plotting
+        step_data = []
+        total_densities = []
+        
+        def update_frame(frame_num):
+            ax1.clear()
+            ax2.clear()
+            
+            # Step simulation
+            if frame_num > 0:
+                current_vector = self.get_current_vector()
+                self.step_forward(A_total, current_vector)
+            
+            # Calculate total density for plot
+            total_density = sum(road.density for road in self.roads)
+            total_densities.append(total_density)
+            
+            # Network visualization (left plot)
+            if G.nodes():
+                # Get road densities for edge colors
+                edge_colors = []
+                edge_labels = {}
+                for edge in G.edges():
+                    if edge in edge_road_mapping:
+                        road = edge_road_mapping[edge]
+                        edge_labels[edge] = f"{road.density:.0f}"
+                        
+                        # Color intensity based on density
+                        max_density = max(r.density for r in self.roads) if self.roads else 1
+                        color_intensity = min(road.density / max_density, 1.0) if max_density > 0 else 0
+                        edge_colors.append(plt.cm.Reds(color_intensity))
+                    else:
+                        edge_colors.append('gray')
+                
+                # Draw network with improved visibility
+                nx.draw_networkx_nodes(G, pos, ax=ax1, node_color='lightblue', 
+                                     node_size=300, alpha=0.8)
+                nx.draw_networkx_edges(G, pos, ax=ax1, edge_color=edge_colors, 
+                                     width=1.5, arrowsize=8, arrowstyle='->', alpha=0.7)
+                
+                # Only show node labels for smaller networks to avoid clutter
+                if len(G.nodes()) <= 100:
+                    nx.draw_networkx_labels(G, pos, {node: f"J{node}" for node in G.nodes()}, 
+                                          ax=ax1, font_size=6, font_weight='bold')
+                
+                # Show edge labels only for very small networks
+                if len(edge_labels) <= 50:
+                    nx.draw_networkx_edge_labels(G, pos, edge_labels, ax=ax1, font_size=4, 
+                                               bbox=dict(boxstyle='round,pad=0.1', 
+                                                       facecolor='yellow', alpha=0.5))
+                
+                ax1.set_title(f"Manhattan Grid Traffic (Step {frame_num})\n{len(G.nodes())} junctions, {len(G.edges())} roads", 
+                            fontsize=12)
+                ax1.set_aspect('equal')
+                ax1.grid(True, alpha=0.3)
+                
+                # Add color bar legend
+                if frame_num == 0:  # Only add once
+                    sm = plt.cm.ScalarMappable(cmap=plt.cm.Reds, 
+                                             norm=plt.Normalize(vmin=0, vmax=max_density))
+                    sm.set_array([])
+                    cbar = fig.colorbar(sm, ax=ax1, shrink=0.6)
+                    #cbar.set_label('Traffic Density', rotation=270, labelpad=15)
+            
+          """   # Total density plot (right plot)
+            if total_densities:
+                ax2.plot(range(len(total_densities)), total_densities, 'b-', linewidth=2)
+                ax2.scatter(len(total_densities)-1, total_densities[-1], color='red', s=50, zorder=5)
+                ax2.set_xlabel('Time Step')
+                #ax2.set_ylabel('Total Traffic Density')
+                ax2.set_title('Total Network Density Over Time')
+                ax2.grid(True, alpha=0.3)
+                ax2.text(0.02, 0.98, f"Current: {total_density:.2f}", transform=ax2.transAxes, 
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8), 
+                        fontsize=10, verticalalignment='top') """
+        
+        # Create animation
+        ani = animation.FuncAnimation(fig, update_frame, frames=num_steps, 
+                                    interval=interval, repeat=False)
+        
+        # Save animation
+        print(f"Saving animation to {timestamped_filename}...")
+        try:
+            ani.save(timestamped_filename, writer='pillow', fps=1000//interval)
+            print(f"Animation saved successfully as {timestamped_filename}")
+        except Exception as e:
+            print(f"Error saving animation: {e}")
+            # Try alternative method
+            try:
+                mp4_filename = timestamped_filename.replace('.gif', '.mp4')
+                ani.save(mp4_filename, writer='ffmpeg', fps=1000//interval)
+                print(f"Animation saved as MP4 instead: {mp4_filename}")
+            except:
+                print("Could not save animation. Running simulation and showing final results...")
+        
+        # Reset to initial state
+        for i, density in enumerate(initial_densities):
+            self.roads[i].density = density
+        
+        plt.close()
+        return ani
