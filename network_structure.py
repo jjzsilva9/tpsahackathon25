@@ -2,7 +2,7 @@ import numpy as np
 
 class Road:
     # 
-    def __init__(self, start, end, id, capacity, potential, name=None, density=0, details=None):
+    def __init__(self, start, end, id, capacity, potential, name=None, density=0, details=None, max_flow=10, lanes=1):
         self.start = start
         self.end = end
         self.id = id
@@ -11,6 +11,8 @@ class Road:
         self.flow_capacity = capacity
         self.potential = potential
         self.details = details
+        self.max_flow = max_flow
+        self.lanes = lanes
         return
 
     #Returns True (False) if full (not full)
@@ -51,7 +53,7 @@ class Network:
         for i in range(num_junctions):
             self.junctions.append(Junction(id=i))
 
-    def add_road(self, start_id, end_id, capacity, potential=0, density=0, name=None):
+    def add_road(self, start_id, end_id, capacity, potential=1, density=0, name=None):
         road_id = f'J{start_id}J{end_id}'
         road = Road(start_id, end_id, road_id, capacity, potential, name=name, density=density)
         
@@ -63,6 +65,11 @@ class Network:
         # Connect the road to both junctions
         self.junctions[start_id].roads_out.append(road_id)
         self.junctions[end_id].road_in.append(road_id)
+
+    def get_current_vector(self):
+        """Get current values for all roads as a numpy array"""
+        current_vector = np.array([min(road.density, road.max_flow) for road in self.roads])
+        return current_vector
 
     def get_road_by_id(self, road_id):
         """Get road object by road_id efficiently using dictionary lookup"""
@@ -143,7 +150,7 @@ class Network:
         print("-" * 30)
         for junction in self.junctions:
             junction_name = junction.name if junction.name else f"Junction_{junction.id}"
-            road_count = len(junction.connected_roads)
+            road_count = len(junction.roads_out) + len(junction.road_in)
             print(f"  J{junction.id}: {junction_name} ({road_count} roads)")
         
         print()
@@ -214,6 +221,67 @@ class Network:
         
         print("=" * 60)
 
+    def show_current_state(self, compact=True):
+        """
+        Display current network state showing road densities in a simple format.
+        
+        Args:
+            compact (bool): If True, show simple list format. If False, show detailed format.
+        """
+        if compact:
+            print("Current Network State:")
+            
+            # Calculate total density
+            total_density = sum(road.density for road in self.roads)
+            
+            # Show roads in simple format
+            for i, road in enumerate(self.roads):
+                density_str = f"{road.density:.2f}" if road.density != int(road.density) else f"{int(road.density)}"
+                print(f"road {i} (J{road.start} --> J{road.end}): {density_str}")
+            
+            print(f"total_density = {total_density:.2f}")
+        
+        else:
+            # Detailed format
+            print("DETAILED NETWORK STATE")
+            print("-" * 60)
+            
+            total_density = 0
+            total_capacity = 0
+            
+            for road in self.roads:
+                density = road.density
+                capacity = road.flow_capacity
+                total_density += density
+                total_capacity += capacity
+                
+                fill_percent = (density / capacity * 100) if capacity > 0 else 0
+                
+                # Status description
+                if fill_percent == 0:
+                    status = "Empty"
+                elif fill_percent < 25:
+                    status = "Light Traffic"
+                elif fill_percent < 50:
+                    status = "Moderate Traffic"
+                elif fill_percent < 75:
+                    status = "Heavy Traffic"
+                else:
+                    status = "Very Heavy/Full"
+                
+                print(f"  Road J{road.start}→J{road.end}:")
+                print(f"    Density: {density:.2f}/{capacity} ({fill_percent:.1f}%)")
+                print(f"    Status: {status}")
+                print(f"    Potential: {road.potential:.2f}")
+                print()
+            
+            overall_percent = (total_density / total_capacity * 100) if total_capacity > 0 else 0
+            print(f"NETWORK SUMMARY:")
+            print(f"  Total Density: {total_density:.2f}")
+            print(f"  Total Capacity: {total_capacity}")
+            print(f"  Overall Fill: {overall_percent:.1f}%")
+            print("-" * 60)
+
     def calculate_A(self, junc_id):
         working_roads_in = self.junctions[junc_id].road_in  # Fixed: road_in not roads_in
         working_roads_out = self.junctions[junc_id].roads_out
@@ -279,12 +347,13 @@ class Network:
         total_A = sum(self.embed_A(junc_id) for junc_id in range(len(self.junctions)))
         return total_A
 
-    def step_forward(self, A_total):
-        v_old = np.array([road.density for road in self.roads])
-        v_new = A_total @ v_old
-        for idx,density in enumerate(v_new):
-            self.roads[idx].density = density
-        pass
+    def step_forward(self, A_total, current_vector):
+        v_delta = A_total @ current_vector
 
-
+        for road in self.roads:
+            road.update_occ(road.density + v_delta[self.get_road_index(road.id)])
+        
+        # Return the new density vector
+        new_densities = np.array([road.density for road in self.roads])
+        return new_densities
 
