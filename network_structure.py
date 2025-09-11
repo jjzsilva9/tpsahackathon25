@@ -2,12 +2,12 @@ import numpy as np
 
 class Road:
     # 
-    def __init__(self, start, end, id, capacity, potential, name=None, occ=0, details=None):
+    def __init__(self, start, end, id, capacity, potential, name=None, density=0, details=None):
         self.start = start
         self.end = end
         self.id = id
         self.name = name
-        self.occ = occ  # Use the parameter value instead of hardcoding to 0
+        self.density = density  # Use the parameter value instead of hardcoding to 0
         self.flow_capacity = capacity
         self.potential = potential
         self.details = details
@@ -15,14 +15,14 @@ class Road:
 
     #Returns True (False) if full (not full)
     def is_full(self):
-        return self.occ >= self.flow_capacity
+        return self.density >= self.flow_capacity
     
     def update_occ(self,new_occ):
-        self.occ = new_occ
+        self.density = new_occ
         return
     
     def __str__(self):
-        return f"Road({self.start}->{self.end}, cars={self.occ}/{self.flow_capacity})"
+        return f"Road({self.start}->{self.end}, cars={self.density}/{self.flow_capacity})"
         
 class Junction:
     def __init__(self, id, name=None):
@@ -51,14 +51,14 @@ class Network:
         for i in range(num_junctions):
             self.junctions.append(Junction(id=i))
 
-    def add_road(self, start_id, end_id, capacity, potential=0, occ=0, name=None):
+    def add_road(self, start_id, end_id, capacity, potential=0, density=0, name=None):
         road_id = f'J{start_id}J{end_id}'
-        road = Road(start_id, end_id, road_id, capacity, potential, name=name, occ=occ)
+        road = Road(start_id, end_id, road_id, capacity, potential, name=name, density=density)
         
         # Add to both structures for dual access
         self.roads.append(road)  # Maintain order for vectors
         self.roads_dict[road_id] = road  # Fast lookup by ID
-        self.state_vector.append(road.occ)
+        self.state_vector.append(road.density)
         
         # Connect the road to both junctions
         self.junctions[start_id].roads_out.append(road_id)
@@ -115,7 +115,7 @@ class Network:
                         start_id=i, 
                         end_id=j, 
                         capacity=capacity, 
-                        occ=0, 
+                        density=0, 
                         name=road_name
                     )
                     road_count += 1
@@ -156,8 +156,8 @@ class Network:
             print("  No roads in the network.")
         else:
             for road in self.roads:
-                # Calculate occ percentage
-                occ_percent = (road.occ / road.flow_capacity * 100) if road.flow_capacity > 0 else 0
+                # Calculate density percentage
+                occ_percent = (road.density / road.flow_capacity * 100) if road.flow_capacity > 0 else 0
                 
                 # Create visual indicator for road load
                 if occ_percent == 0:
@@ -175,7 +175,7 @@ class Network:
                 road_display = f"  J{road.start} {arrow} J{road.end}"
                 
                 if show_details:
-                    capacity_info = f"[{road.occ}/{road.flow_capacity}] {status}"
+                    capacity_info = f"[{road.density}/{road.flow_capacity}] {status}"
                     print(f"{road_display:<15} {capacity_info}")
                 else:
                     print(f"{road_display}")
@@ -224,7 +224,7 @@ class Network:
 
         denom = 0
         for out_road_id in working_roads_out:
-            denom += 1/(self.roads_dict[out_road_id].occ + self.roads_dict[out_road_id].potential)  # Fixed: consistent dict access
+            denom += 1/(self.roads_dict[out_road_id].density + self.roads_dict[out_road_id].potential)  # Fixed: consistent dict access
         
         # Fixed: moved matrix element calculation inside the loops where variables are defined
         for idx_in, road_id in enumerate(all_working_roads):
@@ -233,7 +233,7 @@ class Network:
                 A[idx_in,idx_in] += mat_element
                 for idx_out, road_id_out in enumerate(all_working_roads):
                     if road_id_out in working_roads_out:  # Fixed: check road_id_out not road_id
-                        mat_element = (1/(self.roads_dict[road_id_out].occ + self.roads_dict[road_id_out].potential))/(denom)  # Fixed: consistent dict access and correct variable
+                        mat_element = (1/(self.roads_dict[road_id_out].density + self.roads_dict[road_id_out].potential))/(denom)  # Fixed: consistent dict access and correct variable
                         A[idx_out,idx_in] += mat_element
 
         return A
@@ -253,7 +253,7 @@ class Network:
         local_A = self.calculate_A(junc_id)
         
         # Get roads connected to this junction
-        working_roads_in = self.junctions[junc_id].roads_in
+        working_roads_in = self.junctions[junc_id].road_in  # Fixed: road_in not roads_in
         working_roads_out = self.junctions[junc_id].roads_out
         all_working_roads = working_roads_in + working_roads_out
         
@@ -280,10 +280,10 @@ class Network:
         return total_A
 
     def step_forward(self, A_total):
-        v_old = np.array([road.occ for road in self.roads])
+        v_old = np.array([road.density for road in self.roads])
         v_new = A_total @ v_old
-        for idx,occ in enumerate(v_new):
-            self.roads[idx].occ = occ
+        for idx,density in enumerate(v_new):
+            self.roads[idx].density = density
         pass
 
 
