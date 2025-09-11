@@ -22,7 +22,7 @@ class Road:
         return
     
     def __str__(self):
-        return f"Road({self.start}->{self.end}, cars={self.occ}/{self.capacity})"
+        return f"Road({self.start}->{self.end}, cars={self.occ}/{self.flow_capacity})"
         
 class Junction:
     def __init__(self, id, name=None):
@@ -38,7 +38,9 @@ class Junction:
 class Network:
     def __init__(self):
         self.junctions = []
-        self.roads = dict()
+        self.roads = []  # Ordered list for vector operations
+        self.roads_dict = {}  # Dictionary for fast lookup by road_id
+        self.state_vector = []
         pass
 
     def add_junction(self, id, name = None):
@@ -52,11 +54,32 @@ class Network:
     def add_road(self, start_id, end_id, capacity, potential=0, occ=0, name=None):
         road_id = f'J{start_id}J{end_id}'
         road = Road(start_id, end_id, road_id, capacity, potential, name=name, occ=occ)
-        self.roads[road_id] = road  # Store in dictionary with road_id as key
+        
+        # Add to both structures for dual access
+        self.roads.append(road)  # Maintain order for vectors
+        self.roads_dict[road_id] = road  # Fast lookup by ID
+        self.state_vector.append(road.occ)
         
         # Connect the road to both junctions
         self.junctions[start_id].roads_out.append(road_id)
         self.junctions[end_id].road_in.append(road_id)
+
+    def get_road_by_id(self, road_id):
+        """Get road object by road_id efficiently using dictionary lookup"""
+        return self.roads_dict.get(road_id)
+    
+    def get_road_index(self, road_id):
+        """Get the index of a road in the ordered list by road_id"""
+        road = self.roads_dict.get(road_id)
+        if road:
+            return self.roads.index(road)
+        return None
+    
+    def get_road_by_index(self, index):
+        """Get road object by index in the ordered list"""
+        if 0 <= index < len(self.roads):
+            return self.roads[index]
+        return None
 
 
     def initialise_roads(self, adj_matrix):
@@ -134,7 +157,7 @@ class Network:
         else:
             for road in self.roads:
                 # Calculate occ percentage
-                occ_percent = (road.occ / road.capacity * 100) if road.capacity > 0 else 0
+                occ_percent = (road.occ / road.flow_capacity * 100) if road.flow_capacity > 0 else 0
                 
                 # Create visual indicator for road load
                 if occ_percent == 0:
@@ -152,7 +175,7 @@ class Network:
                 road_display = f"  J{road.start} {arrow} J{road.end}"
                 
                 if show_details:
-                    capacity_info = f"[{road.occ}/{road.capacity}] {status}"
+                    capacity_info = f"[{road.occ}/{road.flow_capacity}] {status}"
                     print(f"{road_display:<15} {capacity_info}")
                 else:
                     print(f"{road_display}")
@@ -170,7 +193,7 @@ class Network:
             
             # Fill the matrix with road capacities
             for road in self.roads:
-                adj_matrix[road.start][road.end] = road.capacity
+                adj_matrix[road.start][road.end] = road.flow_capacity
             
             # Print header row
             print("    ", end="")
@@ -192,7 +215,7 @@ class Network:
         print("=" * 60)
 
     def calculate_A(self, junc_id):
-        working_roads_in = self.junctions[junc_id].roads_in
+        working_roads_in = self.junctions[junc_id].road_in  # Fixed: road_in not roads_in
         working_roads_out = self.junctions[junc_id].roads_out
         all_working_roads = working_roads_in + working_roads_out
         num_roads_total = len(all_working_roads)
@@ -201,21 +224,61 @@ class Network:
 
         denom = 0
         for out_road_id in working_roads_out:
-            denom += 1/(self.roads[out_road_id].occ + self.roads[out_road_id].potential)
-        mat_element = (1/self.roads[road_id].occ)/(denom)
-
-                                      #all_working_roads
+            denom += 1/(self.roads_dict[out_road_id].occ + self.roads_dict[out_road_id].potential)  # Fixed: consistent dict access
+        
+        # Fixed: moved matrix element calculation inside the loops where variables are defined
         for idx_in, road_id in enumerate(all_working_roads):
             if road_id in working_roads_in:
                 mat_element = -1
                 A[idx_in,idx_in] += mat_element
                 for idx_out, road_id_out in enumerate(all_working_roads):
-                    if road_id in working_roads_out:
-                        mat_element = (1/self.roads[road_id].occ + self.roads[out_road_id].potential)/(denom)
+                    if road_id_out in working_roads_out:  # Fixed: check road_id_out not road_id
+                        mat_element = (1/(self.roads_dict[road_id_out].occ + self.roads_dict[road_id_out].potential))/(denom)  # Fixed: consistent dict access and correct variable
                         A[idx_out,idx_in] += mat_element
 
         return A
     
+    def embed_A(self, junc_id):
+        """
+        Calculate junction matrix A embedded in a global matrix.
+        
+        Args:
+            junc_id: Junction ID to calculate matrix for
+            
+        Returns:
+            A matrix of size (total_roads x total_roads) where only elements
+            corresponding to roads connected to this junction are non-zero
+        """
+        # Get the local junction matrix using the existing function
+        local_A = self.calculate_A(junc_id)
+        
+        # Get roads connected to this junction
+        working_roads_in = self.junctions[junc_id].roads_in
+        working_roads_out = self.junctions[junc_id].roads_out
+        all_working_roads = working_roads_in + working_roads_out
+        
+        # Create global matrix (same size as total number of roads)
+        total_roads = len(self.roads)
+        global_A = np.zeros((total_roads, total_roads))
+        
+        # Get global indices for the working roads
+        global_indices = []
+        for road_id in all_working_roads:
+            global_index = self.get_road_index(road_id)
+            if global_index is not None:
+                global_indices.append(global_index)
+        
+        # Embed the local matrix into the global matrix
+        for i, global_i in enumerate(global_indices):
+            for j, global_j in enumerate(global_indices):
+                global_A[global_i, global_j] = local_A[i, j]
+        
+        return global_A
+
+    def sum_matrices(self):
+        total_A = sum(self.embed_A(junc_id) for junc_id in range(len(self.junctions)))
+        return total_A
+
     def step_forward(self, A_total):
         v_old = np.array([road.occ for road in self.roads])
         v_new = A_total @ v_old
