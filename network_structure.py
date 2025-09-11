@@ -2,19 +2,20 @@ import numpy as np
 
 class Road:
     # 
-    def __init__(self, start, end, id, capacity, name=None, occ=0, details=None):
+    def __init__(self, start, end, id, capacity, potential, name=None, occ=0, details=None):
         self.start = start
         self.end = end
         self.id = id
         self.name = name
         self.occ = occ  # Use the parameter value instead of hardcoding to 0
-        self.capacity = capacity
+        self.flow_capacity = capacity
+        self.potential = potential
         self.details = details
         return
 
     #Returns True (False) if full (not full)
     def is_full(self):
-        return self.occ >= self.capacity
+        return self.occ >= self.flow_capacity
     
     def update_occ(self,new_occ):
         self.occ = new_occ
@@ -27,7 +28,8 @@ class Junction:
     def __init__(self, id, name=None):
         self.id = id
         self.name = name
-        self.connected_roads = set()  # Changed to set for easier road management
+        self.roads_out = []  # Changed to set for easier road management
+        self.road_in = []
         return
 
     def __repr__(self):
@@ -36,7 +38,7 @@ class Junction:
 class Network:
     def __init__(self):
         self.junctions = []
-        self.roads = []
+        self.roads = dict()
         pass
 
     def add_junction(self, id, name = None):
@@ -47,13 +49,14 @@ class Network:
         for i in range(num_junctions):
             self.junctions.append(Junction(id=i))
 
-    def add_road(self, start_id, end_id, capacity, occ=0, name=None):
+    def add_road(self, start_id, end_id, capacity, potential=0, occ=0, name=None):
         road_id = f'J{start_id}J{end_id}'
-        self.roads.append(Road(start_id, end_id, road_id, capacity, name=name, occ=occ))
+        road = Road(start_id, end_id, road_id, capacity, potential, name=name, occ=occ)
+        self.roads[road_id] = road  # Store in dictionary with road_id as key
         
         # Connect the road to both junctions
-        self.junctions[start_id].connected_roads.add(road_id)
-        self.junctions[end_id].connected_roads.add(road_id)
+        self.junctions[start_id].roads_out.append(road_id)
+        self.junctions[end_id].road_in.append(road_id)
 
 
     def initialise_roads(self, adj_matrix):
@@ -189,8 +192,28 @@ class Network:
         print("=" * 60)
 
     def calculate_A(self, junc_id):
-        num_connected_roads = len(self.junctions[junc_id].connected_roads)
-        A = np.zeros((num_connected_roads,num_connected_roads))
+        working_roads_in = self.junctions[junc_id].roads_in
+        working_roads_out = self.junctions[junc_id].roads_out
+        all_working_roads = working_roads_in + working_roads_out
+        num_roads_total = len(all_working_roads)
+        
+        A = np.zeros((num_roads_total,num_roads_total))
+
+        denom = 0
+        for out_road_id in working_roads_out:
+            denom += 1/(self.roads[out_road_id].occ + self.roads[out_road_id].potential)
+        mat_element = (1/self.roads[road_id].occ)/(denom)
+
+                                      #all_working_roads
+        for idx_in, road_id in enumerate(all_working_roads):
+            if road_id in working_roads_in:
+                mat_element = -1
+                A[idx_in,idx_in] += mat_element
+                for idx_out, road_id_out in enumerate(all_working_roads):
+                    if road_id in working_roads_out:
+                        mat_element = (1/self.roads[road_id].occ + self.roads[out_road_id].potential)/(denom)
+                        A[idx_out,idx_in] += mat_element
+
         return A
     
     def step_forward(self, A_total):
@@ -199,5 +222,6 @@ class Network:
         for idx,occ in enumerate(v_new):
             self.roads[idx].occ = occ
         pass
+
 
 
